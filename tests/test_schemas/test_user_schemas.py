@@ -2,7 +2,7 @@ import uuid
 import pytest
 from pydantic import ValidationError
 from datetime import datetime
-from app.schemas.user_schemas import UserBase, UserCreate, UserUpdate, UserResponse, UserListResponse, LoginRequest
+from app.schemas.user_schemas import UserBase, UserCreate, UserUpdate, UserResponse, UserListResponse, LoginRequest, validate_profile_picture_url, validate_url
 
 # Fixtures for common test data
 @pytest.fixture
@@ -148,3 +148,60 @@ async def bulk_users_with_role(db_session):
     db_session.add_all([UserCreate(**user) for user in users_to_create])
     await db_session.commit()
     return users_to_create
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/image.bmp",
+    "http://example.com/image.gif",
+    "https://example.com/image",
+    "https://example.com/image.jpg.txt"
+])
+def test_user_base_profile_picture_invalid_extension(url, user_base_data):
+    user_base_data["profile_picture_url"] = url
+    with pytest.raises(ValidationError):
+        UserBase(**user_base_data)
+
+@pytest.mark.parametrize("field, value", [
+    ("linkedin_profile_url", "ftp://linkedin.com/in/testuser"),
+    ("github_profile_url", "randomstring"),
+])
+def test_invalid_social_urls(field, value, user_base_data):
+    user_base_data[field] = value
+    with pytest.raises(ValidationError):
+        UserBase(**user_base_data)
+
+def test_user_create_password_too_short(user_create_data):
+    user_create_data["password"] = "A1@a"
+    with pytest.raises(ValidationError) as e:
+        UserCreate(**user_create_data)
+    assert "at least 8 characters" in str(e.value)
+
+def test_user_update_no_fields():
+    with pytest.raises(ValidationError) as e:
+        UserUpdate()
+    assert "At least one field must be provided for update" in str(e.value)
+
+
+def test_user_update_all_fields(user_update_data):
+    user = UserUpdate(**user_update_data)
+    assert user.nickname == user_update_data["nickname"]
+    assert user.profile_picture_url == user_update_data["profile_picture_url"]
+
+def test_invalid_email_in_user_create(user_create_data):
+    user_create_data["email"] = "invalid-email"
+    with pytest.raises(ValidationError):
+        UserCreate(**user_create_data)
+
+
+def test_user_base_optional_fields_none(user_base_data):
+    user_base_data["bio"] = None
+    user_base_data["linkedin_profile_url"] = None
+    user_base_data["github_profile_url"] = None
+    user = UserBase(**user_base_data)
+    assert user.bio is None
+
+def test_validate_url_accepts_none():
+    assert validate_url(None) is None
+
+def test_validate_profile_picture_url_accepts_none():
+    assert validate_profile_picture_url(None, None) is None
+
