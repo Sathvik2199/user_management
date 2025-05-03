@@ -19,9 +19,10 @@ Key Highlights:
 """
 
 from builtins import dict, int, len, str
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import get_current_user, get_db, get_email_service, require_role
@@ -252,3 +253,60 @@ async def verify_email(user_id: UUID, token: str, db: AsyncSession = Depends(get
     if await UserService.verify_email_with_token(db, user_id, token):
         return {"message": "Email verified successfully"}
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired verification token")
+
+@router.get("/users/search/", response_model=UserListResponse, tags=["User Management Requires (Admin or Manager Roles)"])
+async def search_users(
+    request: Request,
+    username: Optional[str] = Query(None, description="Search by username"),
+    email: Optional[str] = Query(None, description="Search by email address"),
+    first_name: Optional[str] = Query(None, description="Filter by first name"),
+    last_name: Optional[str] = Query(None, description="Filter by last name"),
+    role: Optional[str] = Query(None, description="Filter by user role"),
+    account_status: Optional[str] = Query(None, description="Filter by account status (e.g., active or locked)"),
+    registration_date_from: Optional[datetime] = Query(None, description="Filter users registered after this date"),
+    registration_date_to: Optional[datetime] = Query(None, description="Filter users registered before this date"),
+    skip: int = Query(0, description="Number of records to offset"),
+    limit: int = Query(10, description="Maximum number of results to retrieve"),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Search for users based on a variety of filter criteria, such as username, email, 
+    name, role, account status, or registration date range.
+    
+    Results include pagination details and navigational links.
+    """
+    total_users = await UserService.count(db)
+
+    users = await UserService.search_users(
+        db, 
+        username=username, 
+        email=email, 
+        first_name=first_name, 
+        last_name=last_name, 
+        role=role, 
+        account_status=account_status, 
+        registration_date_from=registration_date_from, 
+        registration_date_to=registration_date_to, 
+        skip=skip, 
+        limit=limit
+    )
+
+    if not users:
+        raise HTTPException(
+            status_code=404, 
+            detail="No matching users found for the provided criteria."
+        )
+
+    user_responses = [
+        UserResponse.model_validate(user) for user in users
+    ]
+
+    pagination_links = generate_pagination_links(request, skip, limit, total_users)
+
+    return UserListResponse(
+        items=user_responses,
+        total=total_users,
+        page=(skip // limit) + 1,
+        size=len(user_responses),
+        links=pagination_links
+    )
